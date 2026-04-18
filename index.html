@@ -3,230 +3,156 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GazeType - Clon Look to Speak</title>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_landmarker/face_landmarker.js" crossorigin="anonymous"></script>
+    <title>LinkEye - Comunicación Ocular</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.js" crossorigin="anonymous"></script>
+
     <style>
-        :root {
-            --bg-color: #000;
-            --text-color: #fff;
-            --accent-color: #2196F3;
-            --highlight: #ffeb3b;
-        }
+        :root { --bg: #000; --text: #fff; --accent: #2196F3; }
+        body { margin: 0; background: var(--bg); color: var(--text); font-family: sans-serif; overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
+        
+        /* Área de visualización */
+        #display { height: 20%; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #111; border-bottom: 2px solid var(--accent); }
+        #text-out { font-size: 2.5rem; color: #ffeb3b; font-weight: bold; }
 
-        body {
-            margin: 0;
-            padding: 0;
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            font-family: 'Segoe UI', Roboto, sans-serif;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-        }
+        /* Paneles */
+        #main { flex: 1; display: flex; }
+        .panel { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 3.5rem; font-weight: bold; transition: 0.3s; border: 2px solid #222; text-align: center; padding: 20px; }
+        .active-left { background: #1a237e !important; }
+        .active-right { background: #1b5e20 !important; }
 
-        /* Pantalla de visualización de texto */
-        #display-area {
-            height: 25%;
-            border-bottom: 2px solid var(--accent-color);
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            padding: 10px;
-            background: #111;
-        }
-
-        #current-phrase {
-            font-size: 1.8rem;
-            min-height: 2.2rem;
-            color: var(--highlight);
-            text-align: center;
-        }
-
-        #predictions {
-            display: flex;
-            gap: 10px;
-            margin-top: 10px;
-        }
-
-        .word-pill {
-            background: var(--accent-color);
-            padding: 5px 15px;
-            border-radius: 20px;
-            font-weight: bold;
-        }
-
-        /* Paneles de Interacción */
-        #interaction-container {
-            flex: 1;
-            display: flex;
-        }
-
-        .panel {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            border: 1px solid #333;
-            transition: background 0.2s;
-        }
-
-        .panel.active {
-            background: #222;
-            border: 4px solid var(--accent-color);
-        }
-
-        .letter-grid {
-            font-size: 3rem;
-            font-weight: bold;
-            text-align: center;
-            word-spacing: 15px;
-            pointer-events: none;
-        }
-
-        /* Video oculto para el tracking */
-        #video-container {
-            position: fixed;
-            top: 0;
-            right: 0;
-            width: 120px;
-            height: 90px;
-            opacity: 0.7;
-            z-index: 100;
-        }
-
-        video { transform: scaleX(-1); width: 100%; height: 100%; border-radius: 8px; }
-
-        .status-dot {
-            width: 15px;
-            height: 15px;
-            border-radius: 50%;
-            background: red;
-            position: absolute;
-            top: 5px;
-            left: 5px;
-        }
+        /* Video de referencia (pequeño) */
+        #camera-preview { position: fixed; bottom: 10px; right: 10px; width: 120px; height: 90px; border: 2px solid var(--accent); border-radius: 8px; transform: scaleX(-1); }
+        
+        #loading { position: fixed; inset: 0; background: #000; display: flex; align-items: center; justify-content: center; z-index: 1000; }
     </style>
 </head>
 <body>
 
-<div id="video-container">
-    <video id="webcam" autoplay playsinline></video>
-    <div id="status" class="status-dot"></div>
+<div id="loading">Cargando IA de LinkEye...</div>
+
+<div id="display">
+    <div id="text-out">Esperando mirada...</div>
 </div>
 
-<div id="display-area">
-    <div id="current-phrase">...</div>
-    <div id="predictions" id="prediction-row">
-        </div>
+<div id="main">
+    <div id="left-panel" class="panel">A B C D E F G<br>H I J K L M</div>
+    <div id="right-panel" class="panel">N O P Q R S T<br>U V W X Y Z</div>
 </div>
 
-<div id="interaction-container">
-    <div id="left-panel" class="panel">
-        <div class="letter-grid" id="left-text">A B C D E F G<br>H I J K L M</div>
-    </div>
-    <div id="right-panel" class="panel">
-        <div class="letter-grid" id="right-text">N O P Q R S T<br>U V W X Y Z</div>
-    </div>
-</div>
+<video id="webcam" autoplay playsinline></video>
+<canvas id="output_canvas" style="display:none"></canvas>
+<video id="camera-preview" autoplay playsinline></video>
 
-<script>
-    const leftPanel = document.getElementById('left-panel');
-    const rightPanel = document.getElementById('right-panel');
-    const display = document.getElementById('current-phrase');
-    const predictionRow = document.getElementById('predictions');
-    
+<script type="module">
+    import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3";
+
+    const leftPanel = document.getElementById("left-panel");
+    const rightPanel = document.getElementById("right-panel");
+    const textOut = document.getElementById("text-out");
+    const loading = document.getElementById("loading");
+    const video = document.getElementById("webcam");
+    const preview = document.getElementById("camera-preview");
+
+    let faceLandmarker;
     let phrase = "";
-    let currentOptions = "ABCDEFGHIJKLMNÑOPQRSTUVWXYZ ".split("");
-    let workingSet = [...currentOptions];
+    let alphabet = "ABCDEFGHIJKLMNÑOPQRSTUVWXYZ ".split("");
+    let currentSet = [...alphabet];
 
-    // --- LÓGICA DE SELECCIÓN TIPO LOOK TO SPEAK ---
-    
-    function updatePanels() {
-        if (workingSet.length === 1) {
-            const char = workingSet[0];
-            if (char === " ") phrase += " ";
-            else phrase += char;
-            
-            display.innerText = phrase || "...";
-            resetSelection();
-            speak(char);
-            updatePredictions();
-            return;
-        }
-
-        const mid = Math.ceil(workingSet.length / 2);
-        const leftSet = workingSet.slice(0, mid);
-        const rightSet = workingSet.slice(mid);
-
-        document.getElementById('left-text').innerText = leftSet.join(" ");
-        document.getElementById('right-text').innerText = rightSet.join(" ");
+    // --- 1. Configurar MediaPipe ---
+    async function setupIA() {
+        const filesetResolver = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
+        faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+            baseOptions: { modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`, delegate: "GPU" },
+            outputFaceBlendshapes: true,
+            runningMode: "VIDEO"
+        });
+        startCamera();
     }
 
-    function selectSide(side) {
-        const mid = Math.ceil(workingSet.length / 2);
-        if (side === 'left') {
-            workingSet = workingSet.slice(0, mid);
-        } else {
-            workingSet = workingSet.slice(mid);
-        }
-        updatePanels();
-    }
-
-    function resetSelection() {
-        workingSet = [...currentOptions];
-        updatePanels();
-    }
-
-    // --- TEXTO PREDICTIVO SIMPLE ---
-    const dictionary = ["HOLA", "NECESITO", "AYUDA", "DOLOR", "AGUA", "HAMBRE", "GRACIAS", "QUIERO", "BAÑO", "AIRE"];
-    
-    function updatePredictions() {
-        predictionRow.innerHTML = "";
-        const lastWord = phrase.split(" ").pop().toUpperCase();
-        if (lastWord.length < 1) return;
-
-        const matches = dictionary.filter(w => w.startsWith(lastWord)).slice(0, 3);
-        matches.forEach(word => {
-            const btn = document.createElement('div');
-            btn.className = "word-pill";
-            btn.innerText = word;
-            // En un sistema real, el usuario miraría ARRIBA para elegir predicciones
-            predictionRow.appendChild(btn);
+    async function startCamera() {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+        video.srcObject = stream;
+        preview.srcObject = stream;
+        video.addEventListener("loadeddata", () => {
+            loading.style.display = "none";
+            detect();
         });
     }
 
-    // --- VOZ ---
-    function speak(text) {
-        const ut = new SpeechSynthesisUtterance(text);
+    // --- 2. Lógica de Detección de Mirada ---
+    let lastGaze = "center";
+    let gazeTimer = 0;
+
+    function detect() {
+        const startTimeMs = performance.now();
+        const results = faceLandmarker.detectForVideo(video, startTimeMs);
+
+        if (results.faceLandmarks && results.faceLandmarks[0]) {
+            const landmarks = results.faceLandmarks[0];
+            
+            // Puntos clave de las pupilas (MediaPipe indices)
+            const leftIris = landmarks[468]; 
+            const rightIris = landmarks[473];
+            const noseTip = landmarks[1]; // Referencia central
+
+            // Cálculo simple de dirección (basado en la posición X de la pupila respecto a la nariz)
+            // Ajustar el 0.05 según la sensibilidad necesaria
+            const diff = leftIris.x - noseTip.x;
+
+            if (diff < -0.055) updateGaze("left");
+            else if (diff > -0.045) updateGaze("right");
+            else updateGaze("center");
+        }
+        requestAnimationFrame(detect);
+    }
+
+    function updateGaze(side) {
+        if (side === lastGaze && side !== "center") {
+            gazeTimer++;
+            if (gazeTimer > 30) { // Si mantiene la mirada por ~1 segundo
+                selectSide(side);
+                gazeTimer = -20; // Pausa para evitar selecciones dobles
+            }
+        } else {
+            gazeTimer = 0;
+            leftPanel.classList.remove("active-left");
+            rightPanel.classList.remove("active-right");
+        }
+        
+        if (side === "left") leftPanel.classList.add("active-left");
+        if (side === "right") rightPanel.classList.add("active-right");
+        lastGaze = side;
+    }
+
+    // --- 3. Lógica de Interfaz ---
+    function selectSide(side) {
+        const mid = Math.ceil(currentSet.length / 2);
+        currentSet = (side === "left") ? currentSet.slice(0, mid) : currentSet.slice(mid);
+        
+        if (currentSet.length === 1) {
+            const char = currentSet[0];
+            phrase += char;
+            textOut.innerText = phrase;
+            speak(char);
+            currentSet = [...alphabet]; // Reset para siguiente letra
+        }
+        renderPanels();
+    }
+
+    function renderPanels() {
+        const mid = Math.ceil(currentSet.length / 2);
+        leftPanel.innerText = currentSet.slice(0, mid).join(" ");
+        rightPanel.innerText = currentSet.slice(mid).join(" ");
+    }
+
+    function speak(t) {
+        const ut = new SpeechSynthesisUtterance(t === " " ? "Espacio" : t);
         ut.lang = 'es-ES';
         window.speechSynthesis.speak(ut);
     }
 
-    // --- TRACKING OCULAR (SIMULADO PARA DEMO / REQUIERE MEDIAPIPE) ---
-    // En una implementación real, aquí conectarías Face Landmarker 
-    // y detectarías el ratio de apertura de ojos y dirección de pupila.
-    
-    let gazeLock = false;
-    window.addEventListener('keydown', (e) => {
-        if (e.key === "ArrowLeft") selectSide('left');
-        if (e.key === "ArrowRight") selectSide('right');
-        if (e.key === "Enter") {
-            speak(phrase);
-            phrase = "";
-            display.innerText = "...";
-        }
-        if (e.key === "Backspace") {
-            phrase = phrase.slice(0, -1);
-            display.innerText = phrase || "...";
-            resetSelection();
-        }
-    });
-
-    // Inicializar
-    updatePanels();
+    setupIA();
 </script>
 </body>
 </html>
